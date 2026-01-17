@@ -1,50 +1,42 @@
 import gradio as gr
 import joblib
 import numpy as np
-import pandas as pd  # Added to fix feature name warnings
+import pandas as pd
 import plotly.graph_objects as go
 import os
 import warnings
 
-# 1. SETUP & CONFIGURATION
-# ---------------------------------------------------------
-# Suppress annoying warnings from sklearn/gradio in the logs
+# 1. SETUP
 warnings.filterwarnings('ignore')
 
 # 2. ASSET LOADING
-# ---------------------------------------------------------
 try:
     model = joblib.load('credit_risk_model.pkl')
     scaler = joblib.load('credit_scaler.pkl')
     le_home = joblib.load('le_home.pkl')
     le_intent = joblib.load('le_intent.pkl')
-    print("✅ System Online: Assets Loaded.")
+    print("✅ System Online.")
 except Exception as e:
-    print(f"⚠️ Critical Error: Missing model files. {e}")
+    print(f"⚠️ Error: {e}")
     model = None
 
-# 3. ADVANCED PREDICTION LOGIC
-# ---------------------------------------------------------
+# 3. LOGIC & VISUALIZATION
 def predict_risk(age, income, loan_amount, credit_score, emp_length, home_ownership, loan_intent, prev_default):
     
     if model is None:
-        return "<h3>⚠️ System Error</h3><p>Model files missing.</p>", None, None
+        return "<h3>⚠️ System Error</h3>", None, None
 
-    # --- A. Feature Engineering ---
+    # --- Feature Engineering ---
     default_val = 1 if prev_default == "Yes" else 0
     dti_ratio = loan_amount / (income + 1)
     
-    # Encode categories
     try:
         home_encoded = le_home.transform([home_ownership])[0]
         intent_encoded = le_intent.transform([loan_intent])[0]
     except:
-        # Fallback if unknown category
         home_encoded = 0
         intent_encoded = 0
 
-    # --- B. Create DataFrame (Fixes 'Valid Feature Names' Warning) ---
-    # We use a DataFrame so the Scaler sees the same column names as training
     feature_names = ['Age', 'Income', 'Loan_Amount', 'Credit_Score', 'Employment_Length', 
                      'Home_Ownership', 'Loan_Intent', 'Previous_Defaults', 'DTI_Ratio']
     
@@ -53,163 +45,148 @@ def predict_risk(age, income, loan_amount, credit_score, emp_length, home_owners
         home_encoded, intent_encoded, default_val, dti_ratio
     ]], columns=feature_names)
     
-    # Scale features
     features_scaled = scaler.transform(input_data)
     
-    # --- C. Prediction ---
+    # --- Prediction ---
     prediction = model.predict(features_scaled)
     probs = model.predict_proba(features_scaled)
     
     risk_prob = probs[0][1] * 100
     safe_prob = probs[0][0] * 100
     
-    # --- D. Generate HTML Status Card (The "Nice UI" Part) ---
+    # --- UI GENERATION (The Major Fix) ---
     if prediction[0] == 1:
-        # REJECT STYLE
-        color = "#fee2e2" # Light Red
-        text_color = "#991b1b" # Dark Red
-        border = "#ef4444"
-        status_icon = "🛑"
-        headline = "High Risk Detected"
-        sub_text = f"Probability of Default: <b>{risk_prob:.1f}%</b>"
-        action = "Recommended Action: <b>DECLINE APPLICATION</b>"
+        # HIGH RISK - Dark Red Card
+        card_color = "linear-gradient(135deg, #450a0a 0%, #7f1d1d 100%)" # Deep Red Gradient
+        border_color = "#f87171" # Light Red Border
+        icon = "🛑"
+        title = "HIGH RISK DETECTED"
+        prob_text = f"Default Probability: <span style='color: #fca5a5; font-size: 24px; font-weight: bold;'>{risk_prob:.1f}%</span>"
+        action = "RECOMMENDATION: DECLINE"
     else:
-        # APPROVE STYLE
-        color = "#dcfce7" # Light Green
-        text_color = "#166534" # Dark Green
-        border = "#22c55e"
-        status_icon = "✅"
-        headline = "Application Approved"
-        sub_text = f"Likelihood of Repayment: <b>{safe_prob:.1f}%</b>"
-        action = "Recommended Action: <b>APPROVE LOAN</b>"
-        
+        # LOW RISK - Dark Green Card
+        card_color = "linear-gradient(135deg, #052e16 0%, #14532d 100%)" # Deep Green Gradient
+        border_color = "#4ade80" # Light Green Border
+        icon = "✅"
+        title = "LOAN APPROVED"
+        prob_text = f"Repayment Score: <span style='color: #86efac; font-size: 24px; font-weight: bold;'>{safe_prob:.1f}%</span>"
+        action = "RECOMMENDATION: APPROVE"
+
     html_result = f"""
-    <div style="background-color: {color}; color: {text_color}; padding: 25px; border-radius: 12px; border: 2px solid {border}; text-align: center; font-family: sans-serif;">
-        <h2 style="margin:0; font-size: 28px;">{status_icon} {headline}</h2>
-        <p style="font-size: 18px; margin-top: 10px;">{sub_text}</p>
-        <hr style="border-color: {text_color}; opacity: 0.3;">
-        <p style="font-size: 16px; font-weight: bold;">{action}</p>
+    <div style="background: {card_color}; padding: 25px; border-radius: 15px; border: 1px solid {border_color}; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+        <h2 style="margin:0; color: white; font-size: 24px; letter-spacing: 1px;">{icon} {title}</h2>
+        <p style="margin-top: 15px; color: #e5e7eb; font-size: 16px;">{prob_text}</p>
+        <hr style="border-color: rgba(255,255,255,0.2); margin: 15px 0;">
+        <p style="color: white; font-weight: bold; font-size: 18px; margin: 0;">{action}</p>
     </div>
     """
 
-    # --- E. Charts ---
+    # --- DARK MODE CHARTS ---
     
-    # Chart 1: Credit Score Gauge
+    # Chart 1: Gauge
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = credit_score,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Credit Health (FICO)"},
+        title = {'text': "FICO Score", 'font': {'color': 'white'}},
+        number = {'font': {'color': 'white'}},
         gauge = {
-            'axis': {'range': [300, 850]},
-            'bar': {'color': "black"},
+            'axis': {'range': [300, 850], 'tickcolor': "white"},
+            'bar': {'color': "#00bcd4"}, # Cyan needle
+            'bgcolor': "rgba(0,0,0,0)",
+            'borderwidth': 0,
             'steps': [
-                {'range': [300, 600], 'color': "#ef4444"},
-                {'range': [600, 750], 'color': "#faca2b"},
-                {'range': [750, 850], 'color': "#22c55e"}
+                {'range': [300, 600], 'color': "#7f1d1d"}, # Dark Red
+                {'range': [600, 750], 'color': "#ca8a04"}, # Dark Yellow
+                {'range': [750, 850], 'color': "#14532d"}  # Dark Green
             ],
-            'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 600}
+            'threshold': {'line': {'color': "white", 'width': 4}, 'thickness': 0.75, 'value': 600}
         }
     ))
-    fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+    # Make transparent and dark text
+    fig_gauge.update_layout(paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"}, height=250, margin=dict(t=40, b=20, l=20, r=20))
     
-    # Chart 2: Debt-to-Income (DTI) Thermometer (New Feature!)
-    # Visualizes if the loan is too big for the income
+    # Chart 2: DTI Bullet
     fig_dti = go.Figure(go.Indicator(
         mode = "number+gauge",
         value = dti_ratio * 100,
-        number = {'suffix': "%"},
-        title = {'text': "Debt-to-Income Ratio"},
+        number = {'suffix': "%", 'font': {'color': 'white'}},
+        title = {'text': "Debt Load (DTI)", 'font': {'color': 'white'}},
         gauge = {
             'shape': "bullet",
-            'axis': {'range': [0, 100]},
+            'axis': {'range': [0, 100], 'tickcolor': "white"},
+            'bar': {'color': "white"}, # White marker
+            'bgcolor': "rgba(255,255,255,0.1)",
             'steps': [
-                {'range': [0, 30], 'color': "#22c55e"}, # Safe zone
-                {'range': [30, 45], 'color': "#faca2b"}, # Warning zone
-                {'range': [45, 100], 'color': "#ef4444"} # Danger zone
+                {'range': [0, 30], 'color': "#14532d"}, # Green
+                {'range': [30, 45], 'color': "#ca8a04"}, # Yellow
+                {'range': [45, 100], 'color': "#7f1d1d"} # Red
             ],
-            'threshold': {'line': {'color': "black", 'width': 2}, 'thickness': 0.75, 'value': 40}
+            'threshold': {'line': {'color': "cyan", 'width': 2}, 'thickness': 0.75, 'value': 40}
         }
     ))
-    fig_dti.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+    fig_dti.update_layout(paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"}, height=250, margin=dict(t=40, b=20, l=20, r=20))
 
     return html_result, fig_gauge, fig_dti
 
-# 4. UI CONSTRUCTION (Modern Look)
+# 4. DARK UI LAYOUT
 # ---------------------------------------------------------
-# Custom CSS for spacing and fonts
+# Force a dark theme via CSS
 custom_css = """
-.container { max-width: 1100px; margin: auto; }
-.panel { background: #f9fafb; padding: 20px; border-radius: 10px; border: 1px solid #e5e7eb; }
+body { background-color: #0f172a; color: white; }
+.gradio-container { background-color: #0f172a !important; border: none; }
+.panel { background-color: #1e293b !important; border: 1px solid #334155 !important; border-radius: 10px; padding: 20px; }
+label { color: #e2e8f0 !important; }
+span { color: #e2e8f0 !important; }
 """
 
-with gr.Blocks(title="Fintech Risk AI", css=custom_css) as demo:
+with gr.Blocks(theme=gr.themes.Base(), css=custom_css, title="Fintech Risk AI") as demo:
     
-    # --- Header ---
     with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("## 🏦 NovaBank AI")
-        with gr.Column(scale=4):
-            gr.Markdown("# Credit Risk Assessment System v2.0")
-            gr.Markdown("_Advanced Machine Learning for Real-Time Loan Decisioning_")
-    
-    gr.Markdown("---")
+        gr.Markdown("# 🏦 NovaBank Risk Terminal", elem_id="header")
     
     with gr.Row():
         
-        # --- LEFT PANEL: INPUTS ---
-        with gr.Column(scale=1, variant="panel"):
-            gr.Markdown("### 📋 Applicant Profile")
+        # LEFT: CONTROLS
+        with gr.Column(scale=1, elem_classes="panel"):
+            gr.Markdown("### 📝 Applicant Data")
             
             with gr.Tabs():
-                with gr.TabItem("👤 Identity"):
-                    age = gr.Slider(18, 80, step=1, label="Age", value=30)
-                    home = gr.Dropdown(['Rent', 'Mortgage', 'Own'], label="Housing Status", value="Rent")
-                    emp_length = gr.Slider(0, 40, step=1, label="Years Employed", value=5)
+                with gr.TabItem("👤 Profile"):
+                    age = gr.Slider(18, 80, label="Age", value=30)
+                    home = gr.Dropdown(['Rent', 'Mortgage', 'Own'], label="Housing", value="Rent")
+                    emp = gr.Slider(0, 40, label="Exp (Yrs)", value=5)
                 
-                with gr.TabItem("💰 Financials"):
-                    income = gr.Number(label="Annual Income ($)", value=55000)
-                    loan_amt = gr.Number(label="Loan Amount Requested ($)", value=15000)
-                    loan_intent = gr.Dropdown(['Personal', 'Education', 'Medical', 'Venture'], label="Purpose", value="Personal")
+                with gr.TabItem("💰 Income"):
+                    income = gr.Number(label="Income ($)", value=55000)
+                    loan = gr.Number(label="Loan ($)", value=15000)
+                    intent = gr.Dropdown(['Personal', 'Education', 'Medical', 'Venture'], label="Purpose", value="Personal")
                 
-                with gr.TabItem("📊 Credit History"):
-                    credit_score = gr.Slider(300, 850, step=1, label="FICO Score", value=680)
-                    default = gr.Radio(["No", "Yes"], label="Previous Default?", value="No")
+                with gr.TabItem("💳 History"):
+                    score = gr.Slider(300, 850, label="FICO Score", value=680)
+                    default = gr.Radio(["No", "Yes"], label="Past Default?", value="No")
 
             gr.Markdown("<br>")
-            btn = gr.Button("🚀 Analyze Risk Profile", variant="primary", size="lg")
+            btn = gr.Button("RUN ANALYSIS", variant="primary")
             
-        # --- RIGHT PANEL: OUTPUTS ---
-        with gr.Column(scale=1):
-            gr.Markdown("### 🛡️ Analysis Report")
+        # RIGHT: DASHBOARD
+        with gr.Column(scale=2):
+            # Status Card
+            out_html = gr.HTML()
             
-            # The HTML Status Card
-            out_html = gr.HTML(label="Decision Logic")
-            
-            # The Two Charts
+            # Charts Row
             with gr.Row():
-                out_gauge = gr.Plot(label="Credit Health")
-                out_dti = gr.Plot(label="Debt Load")
+                with gr.Column(elem_classes="panel"):
+                    out_gauge = gr.Plot()
+                with gr.Column(elem_classes="panel"):
+                    out_dti = gr.Plot()
 
-    # --- FOOTER ---
-    gr.Markdown("---")
-    gr.Markdown("🔒 *CONFIDENTIAL: For internal bank use only. Model: Gradient Boosting (Accuracy: 92%)*")
-
-    # --- LOGIC CONNECTION ---
     btn.click(
         fn=predict_risk,
-        inputs=[age, income, loan_amt, credit_score, emp_length, home, loan_intent, default],
+        inputs=[age, income, loan, score, emp, home, intent, default],
         outputs=[out_html, out_gauge, out_dti]
     )
 
-# 5. SERVER LAUNCHER
-# ---------------------------------------------------------
+# 5. DEPLOY
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    
-    # Launch with modern theme
-    demo.launch(
-        server_name="0.0.0.0", 
-        server_port=port,
-        theme=gr.themes.Soft(primary_hue="blue", neutral_hue="slate")
-    )
+    demo.launch(server_name="0.0.0.0", server_port=port)
